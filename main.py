@@ -5,7 +5,7 @@ import json
 from PIL import Image, ImageTk
 from natsort import natsorted
 
-DIFF = 98
+DIFF = 150
 
 class ImageViewer(tk.Frame):
     def __init__(self, master, image_list, images_path, annotations, saved_data_path):
@@ -22,9 +22,25 @@ class ImageViewer(tk.Frame):
         self.current_image_index = 0
         self.current_image_name = None
         self.new_annotation_id = 1000000
+        self.scale_factor = 0.85
 
-        self.canvas = tk.Canvas(self.master, width=1062, height=1062)
-        self.canvas.pack()
+        self.canvas = tk.Canvas(self, width=600, height=600)
+        self.canvas.grid(row=0, column=0, sticky="nsew")
+
+        self.scrollbar_y = tk.Scrollbar(self, orient=tk.VERTICAL, command=self.canvas.yview)
+        self.scrollbar_y.grid(row=0, column=1, sticky="ns")
+        self.canvas.configure(yscrollcommand=self.scrollbar_y.set)
+
+        self.scrollbar_x = tk.Scrollbar(self, orient=tk.HORIZONTAL, command=self.canvas.xview)
+        self.scrollbar_x.grid(row=1, column=0, sticky="ew")
+        self.canvas.configure(xscrollcommand=self.scrollbar_x.set)
+
+        self.grid_rowconfigure(0, weight=1)
+        self.grid_columnconfigure(0, weight=1)
+
+        # Create a frame inside the canvas to hold the image
+        self.image_frame = tk.Frame(self.canvas)
+        self.canvas.create_window((0, 0), window=self.image_frame, anchor=tk.NW)
 
         self.label = tk.Label(self.master, text="", font=("Arial", 18))
         self.label.pack()
@@ -32,11 +48,15 @@ class ImageViewer(tk.Frame):
         self.create_button = tk.Button(self.master, text="Create Annotation", command=self.create_annotation)
         self.create_button.pack()
 
+        self.open_button = tk.Button(self.master, text="Open Original File", command=self.open_original_file)
+        self.open_button.pack()
+
         self.use_saved_data()
         self.load_image()
         self.draw_annotations()
 
-        self.canvas.bind("<Double-Button-1>", self.open_original_file)
+        self.canvas.bind("<Configure>", self.on_canvas_configure)
+        self.canvas.bind("<Double-Button-1>", self.on_double_click)
         self.master.bind("<Left>", self.previous_image)
         self.master.bind("<Right>", self.next_image)
         self.master.bind("<Button-1>", self.on_click)
@@ -44,6 +64,9 @@ class ImageViewer(tk.Frame):
         self.master.bind("<ButtonRelease-1>", self.on_release)
         self.master.bind('<BackSpace>', self.delete_annotation)
 
+    def on_canvas_configure(self, event):
+        self.canvas.configure(scrollregion=self.canvas.bbox("all"))
+    
     def create_annotation(self):
         annotation_id = self.new_annotation_id
         self.new_annotation_id += 1
@@ -60,45 +83,34 @@ class ImageViewer(tk.Frame):
 
     def load_image(self):
         self.label.config(text=f"{self.current_image_index + 1} / {self.image_count}")
+
+        # get image from file
         image_name = self.image_list[self.current_image_index]
         self.current_image_name = image_name.split('#')[-1]
         image_path = os.path.join(self.images_path, image_name)
         image = Image.open(image_path)
-        self.canvas.config(width=int(0.9*image.width), height=int(0.9*image.height))
+        image.thumbnail((1200, 1200), Image.BILINEAR)
+        # self.canvas.config(width=int(self.scale_factor*image.width), height=int(self.scale_factor*image.height))
         self.photo = ImageTk.PhotoImage(image)
-        self.canvas.create_image(int(0.9*image.width)/2, 
-                                 int(0.9*image.height)/2, 
-                                 anchor="center", image=self.photo)
+
+        # Create a label to display the image
+        self.image_label = tk.Label(self.image_frame, image=self.photo)
+        self.image_label.image = self.photo
+        self.image_label.pack()
+        # self.image_object = self.canvas.create_image(int(self.scale_factor*image.width)/2,
+        #                                              int(self.scale_factor*image.height)/2,
+        #                                              anchor="center", image=self.photo)
         
         self.master.title(self.current_image_name)
 
     def draw_annotations(self):
         for annotation in self.annotations[self.current_image_name]:
-            points = [i + DIFF for i in annotation['keypoints']]
+            points = [(self.scale_factor * (i + DIFF)) for i in annotation['keypoints']]
             self.canvas.create_polygon(points, fill='', outline='red', width=2, tags="annotation")
             for x, y in zip(points[::2], points[1::2]):
                 self.canvas.create_oval(x - 5, y - 5, x + 5, y + 5, fill="green", tags="annotation")
             for i in range(0, len(points), 2):
                 self.canvas.create_text(points[i], points[i+1], text=str(i//2 + 1), tags="annotation")
-    
-
-    # def load_annotations(self):
-    #     with open(self.annotate_path, 'r') as f:
-    #         lines = f.readlines()
-    #         for line in lines:
-    #             id_and_points = line.split()
-    #             annotation_id = id_and_points[0]
-    #             points = [float(x) for x in id_and_points[1:]]
-    #             self.annotations.append((annotation_id, points))
-
-    # def draw_annotations(self):
-    #     for annotation in self.annotations:
-    #         points = annotation[1]
-    #         self.canvas.create_polygon(points, fill='', outline='red', width=2, tags="annotation")
-    #         for x, y in zip(points[::2], points[1::2]):
-    #             self.canvas.create_oval(x - 5, y - 5, x + 5, y + 5, fill="green", tags="annotation")
-    #         for i in range(0, len(points), 2):
-    #             self.canvas.create_text(points[i], points[i+1], text=str(i//2 + 1), tags="annotation")
     
     def previous_image(self, event):
         if self.current_image_index > 0:
@@ -111,6 +123,47 @@ class ImageViewer(tk.Frame):
             self.current_image_index += 1
             self.load_image()
             self.draw_annotations()
+
+    def on_double_click(self, event):
+        for i, annotation in enumerate(self.annotations[self.current_image_name]):
+            for j in range(0, len(annotation['keypoints']), 2):
+                x, y = annotation['keypoints'][j] + DIFF, annotation['keypoints'][j+1] + DIFF
+                if abs(x - event.x) <= 5 and abs(y - event.y) <= 5:
+                    self.select_corner_property(event)
+                    break
+
+    def select_corner_property(self, event):
+        def close_window():
+            print("Selected option:", selected_option.get())
+            self.annotations[self.current_image_name][self.selected_annotation]['corner_property'][self.active_point // 2] = selected_option.get()
+            selection_window.destroy()
+        def close_window_without_saving(event):
+            selection_window.destroy()
+        
+        selection_window = tk.Toplevel(self.master)
+        selection_window.geometry(f"+{event.x_root}+{event.y_root}")
+        selection_window.bind("<FocusOut>", close_window_without_saving)
+        
+        selected_option = tk.StringVar()
+
+        option_v = tk.Radiobutton(selection_window, text="visible", variable=selected_option, value="visible")
+        option_c = tk.Radiobutton(selection_window, text="covered", variable=selected_option, value="covered")
+        option_t = tk.Radiobutton(selection_window, text="truncated", variable=selected_option, value="truncated")
+        
+        initial_property = self.annotations[self.current_image_name][self.selected_annotation]['corner_property'][self.active_point // 2]
+        if initial_property == "visible":
+            option_v.select()
+        elif initial_property == "covered":
+            option_c.select()
+        elif initial_property == "truncated":
+            option_t.select()
+
+        confirm_button = tk.Button(selection_window, text="Confirm", command=close_window)
+        
+        option_v.pack()
+        option_c.pack()
+        option_t.pack()
+        confirm_button.pack()
 
     def on_click(self, event):
         self.active_point = -1
@@ -125,7 +178,7 @@ class ImageViewer(tk.Frame):
                     self.last_selected_annotation = i
                     self.active_point = j
                     self.canvas.create_oval(x - 5, y - 5, x + 5, y + 5, outline="yellow", tags="highlight")
-                    break
+                    return
 
     def on_drag(self, event):
         if self.active_point != -1:
@@ -136,6 +189,8 @@ class ImageViewer(tk.Frame):
 
             self.canvas.delete("highlight")
             self.canvas.create_oval(event.x - 5, event.y - 5, event.x + 5, event.y + 5, outline="yellow", tags="highlight")
+        # else:
+        #     self.canvas.move(self.image_object, event.x, event.y)
 
     def on_release(self, event):
         self.active_point = -1
@@ -146,13 +201,15 @@ class ImageViewer(tk.Frame):
         if self.last_selected_annotation != -1:
             self.annotations[self.current_image_name].pop(self.last_selected_annotation)
             self.canvas.delete("annotation")
+            self.canvas.delete("highlight")
             self.draw_annotations()
             self.save_annotations()
 
     def save_annotations(self):
         with open("annotations.txt", 'w+') as file:
             for annotation in self.annotations[self.current_image_name]:
-                line = f"{annotation['id']} {' '.join(str(i - DIFF) for i in annotation['keypoints'])}\n"
+                corners_str = ' '.join(f"{annotation['corner_property'][i // 2]} {annotation['keypoints'][i] - DIFF} {annotation['keypoints'][i+1] - DIFF}" for i in range(0, len(annotation['keypoints']), 2))
+                line = f"{annotation['id']} " + corners_str + "\n"
                 file.write(line)
 
     def use_saved_data(self):
@@ -173,7 +230,7 @@ class ImageViewer(tk.Frame):
             file.write(str(self.new_annotation_id))
 
 
-    def open_original_file(self, event):
+    def open_original_file(self):
         image_name = self.image_list[self.current_image_index]
         file_path = os.path.join(self.images_path, image_name)
         # file_path = os.path.abspath(image_path)
@@ -186,7 +243,7 @@ class ImageViewer(tk.Frame):
         self.save_data()
         self.master.destroy()
 
-def initialize():
+def initialize_annotations():
     with open('result_adjust_order.json', 'r') as file:
         data = json.load(file)
     
@@ -220,6 +277,7 @@ def read_images(images_path, annotations_path, saved_data_path):
     
     root = tk.Tk()
     viewer = ImageViewer(root, image_files, images_path, annotations_path, saved_data_path)
+    viewer.pack(fill=tk.BOTH, expand=True)
     root.protocol("WM_DELETE_WINDOW", viewer.quit)
     root.mainloop()
     
@@ -232,6 +290,6 @@ annotations_path = "annotations.txt"
 # (2) the next available annotation index
 saved_data_path = "saved_data.txt"
 
-annotations = initialize() # dict(file_name -> list of annotation dicts)
+annotations = initialize_annotations() # dict(file_name -> list of annotation dicts)
 
 read_images(images_path, annotations, saved_data_path)
