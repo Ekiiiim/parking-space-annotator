@@ -24,23 +24,8 @@ class ImageViewer(tk.Frame):
         self.new_annotation_id = 1000000
         self.scale_factor = 0.85
 
-        self.canvas = tk.Canvas(self, width=600, height=600)
-        self.canvas.grid(row=0, column=0, sticky="nsew")
-
-        self.scrollbar_y = tk.Scrollbar(self, orient=tk.VERTICAL, command=self.canvas.yview)
-        self.scrollbar_y.grid(row=0, column=1, sticky="ns")
-        self.canvas.configure(yscrollcommand=self.scrollbar_y.set)
-
-        self.scrollbar_x = tk.Scrollbar(self, orient=tk.HORIZONTAL, command=self.canvas.xview)
-        self.scrollbar_x.grid(row=1, column=0, sticky="ew")
-        self.canvas.configure(xscrollcommand=self.scrollbar_x.set)
-
-        self.grid_rowconfigure(0, weight=1)
-        self.grid_columnconfigure(0, weight=1)
-
-        # Create a frame inside the canvas to hold the image
-        self.image_frame = tk.Frame(self.canvas)
-        self.canvas.create_window((0, 0), window=self.image_frame, anchor=tk.NW)
+        self.canvas = tk.Canvas(self.master, width=1062, height=1062)
+        self.canvas.pack()
 
         self.label = tk.Label(self.master, text="", font=("Arial", 18))
         self.label.pack()
@@ -55,7 +40,6 @@ class ImageViewer(tk.Frame):
         self.load_image()
         self.draw_annotations()
 
-        self.canvas.bind("<Configure>", self.on_canvas_configure)
         self.canvas.bind("<Double-Button-1>", self.on_double_click)
         self.master.bind("<Left>", self.previous_image)
         self.master.bind("<Right>", self.next_image)
@@ -64,9 +48,6 @@ class ImageViewer(tk.Frame):
         self.master.bind("<ButtonRelease-1>", self.on_release)
         self.master.bind('<BackSpace>', self.delete_annotation)
 
-    def on_canvas_configure(self, event):
-        self.canvas.configure(scrollregion=self.canvas.bbox("all"))
-    
     def create_annotation(self):
         annotation_id = self.new_annotation_id
         self.new_annotation_id += 1
@@ -89,23 +70,19 @@ class ImageViewer(tk.Frame):
         self.current_image_name = image_name.split('#')[-1]
         image_path = os.path.join(self.images_path, image_name)
         image = Image.open(image_path)
-        image.thumbnail((1200, 1200), Image.BILINEAR)
-        # self.canvas.config(width=int(self.scale_factor*image.width), height=int(self.scale_factor*image.height))
+        
+        self.canvas.config(width=int(self.scale_factor*image.width), height=int(self.scale_factor*image.height))
         self.photo = ImageTk.PhotoImage(image)
 
-        # Create a label to display the image
-        self.image_label = tk.Label(self.image_frame, image=self.photo)
-        self.image_label.image = self.photo
-        self.image_label.pack()
-        # self.image_object = self.canvas.create_image(int(self.scale_factor*image.width)/2,
-        #                                              int(self.scale_factor*image.height)/2,
-        #                                              anchor="center", image=self.photo)
+        self.image_object = self.canvas.create_image(int(self.scale_factor*image.width)/2,
+                                                     int(self.scale_factor*image.height)/2,
+                                                     anchor="center", image=self.photo)
         
         self.master.title(self.current_image_name)
 
     def draw_annotations(self):
         for annotation in self.annotations[self.current_image_name]:
-            points = [(self.scale_factor * (i + DIFF)) for i in annotation['keypoints']]
+            points = [self.scale_factor * i for i in annotation['keypoints']]
             self.canvas.create_polygon(points, fill='', outline='red', width=2, tags="annotation")
             for x, y in zip(points[::2], points[1::2]):
                 self.canvas.create_oval(x - 5, y - 5, x + 5, y + 5, fill="green", tags="annotation")
@@ -127,10 +104,10 @@ class ImageViewer(tk.Frame):
     def on_double_click(self, event):
         for i, annotation in enumerate(self.annotations[self.current_image_name]):
             for j in range(0, len(annotation['keypoints']), 2):
-                x, y = annotation['keypoints'][j] + DIFF, annotation['keypoints'][j+1] + DIFF
+                x, y = self.scale_factor * annotation['keypoints'][j], self.scale_factor * annotation['keypoints'][j+1]
                 if abs(x - event.x) <= 5 and abs(y - event.y) <= 5:
                     self.select_corner_property(event)
-                    break
+                    return
 
     def select_corner_property(self, event):
         def close_window():
@@ -141,6 +118,7 @@ class ImageViewer(tk.Frame):
             selection_window.destroy()
         
         selection_window = tk.Toplevel(self.master)
+        selection_window.title(self.active_point // 2)
         selection_window.geometry(f"+{event.x_root}+{event.y_root}")
         selection_window.bind("<FocusOut>", close_window_without_saving)
         
@@ -172,7 +150,7 @@ class ImageViewer(tk.Frame):
         self.canvas.delete("highlight")
         for i, annotation in enumerate(self.annotations[self.current_image_name]):
             for j in range(0, len(annotation['keypoints']), 2):
-                x, y = annotation['keypoints'][j] + DIFF, annotation['keypoints'][j+1] + DIFF
+                x, y = self.scale_factor * annotation['keypoints'][j], self.scale_factor * annotation['keypoints'][j+1]
                 if abs(x - event.x) <= 5 and abs(y - event.y) <= 5:
                     self.selected_annotation = i
                     self.last_selected_annotation = i
@@ -182,8 +160,8 @@ class ImageViewer(tk.Frame):
 
     def on_drag(self, event):
         if self.active_point != -1:
-            self.annotations[self.current_image_name][self.selected_annotation]['keypoints'][self.active_point] = event.x - DIFF
-            self.annotations[self.current_image_name][self.selected_annotation]['keypoints'][self.active_point + 1] = event.y - DIFF
+            self.annotations[self.current_image_name][self.selected_annotation]['keypoints'][self.active_point] = event.x / self.scale_factor
+            self.annotations[self.current_image_name][self.selected_annotation]['keypoints'][self.active_point + 1] = event.y / self.scale_factor
             self.canvas.delete("annotation")
             self.draw_annotations()
 
@@ -193,13 +171,14 @@ class ImageViewer(tk.Frame):
         #     self.canvas.move(self.image_object, event.x, event.y)
 
     def on_release(self, event):
-        self.active_point = -1
         self.selected_annotation = -1
         self.save_annotations()
 
     def delete_annotation(self, event):
         if self.last_selected_annotation != -1:
             self.annotations[self.current_image_name].pop(self.last_selected_annotation)
+            self.active_point = -1
+            self.last_selected_annotation = -1
             self.canvas.delete("annotation")
             self.canvas.delete("highlight")
             self.draw_annotations()
@@ -259,7 +238,7 @@ def initialize_annotations():
     for d in data['annotations']:
         new_dict = {}
         new_dict['id'] = d['id']
-        new_dict['keypoints'] = d['keypoints']
+        new_dict['keypoints'] = [i + DIFF for i in d['keypoints']]
         new_dict['corner_property'] = d['corner_property']
         new_dict['category'] = categories[d['category_id']]
         if new_dict['category'] == "parking_space":
@@ -277,7 +256,6 @@ def read_images(images_path, annotations_path, saved_data_path):
     
     root = tk.Tk()
     viewer = ImageViewer(root, image_files, images_path, annotations_path, saved_data_path)
-    viewer.pack(fill=tk.BOTH, expand=True)
     root.protocol("WM_DELETE_WINDOW", viewer.quit)
     root.mainloop()
     
