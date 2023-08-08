@@ -4,17 +4,19 @@ import subprocess
 import json
 from PIL import Image, ImageTk
 from natsort import natsorted
+from deserialize import extract_json_files
 
 DIFF = 150
 
 class ImageViewer(tk.Frame):
-    def __init__(self, master, image_list, images_path, annotations, saved_data_path):
+    def __init__(self, master, image_list, images_path, folders_with_annotations, saved_data_path, final_output_path):
         tk.Frame.__init__(self, master)
         self.master = master
         self.image_list = image_list
         self.images_path = images_path
-        self.annotations = annotations
+        self.folders_with_annotations = folders_with_annotations
         self.saved_data_path = saved_data_path
+        self.final_output_path = final_output_path
         self.image_count = len(image_list)
         self.active_point = -1
         self.selected_annotation = -1
@@ -22,13 +24,14 @@ class ImageViewer(tk.Frame):
         self.current_image_index = 0
         self.current_image_name = None
         self.new_annotation_id = 1000000
-        self.scale_factor = 0.85
+        self.scale_factor = 1
+        self.current_folder = None
 
-        self.canvas = tk.Canvas(self.master, width=1062, height=1062)
-        self.canvas.pack()
+        self.canvas = tk.Canvas(self.master, width=1068, height=1068)
+        self.canvas.pack(side='left')
 
         self.label = tk.Label(self.master, text="", font=("Arial", 18))
-        self.label.pack()
+        self.label.pack(side='top')
 
         self.create_button = tk.Button(self.master, text="Create Annotation", command=self.create_annotation)
         self.create_button.pack()
@@ -52,10 +55,11 @@ class ImageViewer(tk.Frame):
         annotation_id = self.new_annotation_id
         self.new_annotation_id += 1
         points = [400, 400, 600, 400, 600, 500, 400, 500]
-        self.annotations[self.current_image_name].append(
+        self.folders_with_annotations[self.current_folder][self.current_image_name].append(
             {'id':annotation_id,
              'category': 'parking_space',
              'corner_property': ['visible', 'visible', 'covered', 'covered'],
+             'T_or_L': ['L', 'L'],
              'keypoints': points,
              'parking_slot_property_1': ['idle']})
         self.canvas.delete("annotation")
@@ -68,6 +72,7 @@ class ImageViewer(tk.Frame):
         # get image from file
         image_name = self.image_list[self.current_image_index]
         self.current_image_name = image_name.split('#')[-1]
+        self.current_folder = image_name.split('#')[-3]
         image_path = os.path.join(self.images_path, image_name)
         image = Image.open(image_path)
         
@@ -81,7 +86,7 @@ class ImageViewer(tk.Frame):
         self.master.title(self.current_image_name)
 
     def draw_annotations(self):
-        for annotation in self.annotations[self.current_image_name]:
+        for annotation in self.folders_with_annotations[self.current_folder][self.current_image_name]:
             points = [self.scale_factor * i for i in annotation['keypoints']]
             self.canvas.create_polygon(points, fill='', outline='red', width=2, tags="annotation")
             for x, y in zip(points[::2], points[1::2]):
@@ -102,7 +107,7 @@ class ImageViewer(tk.Frame):
             self.draw_annotations()
 
     def on_double_click(self, event):
-        for i, annotation in enumerate(self.annotations[self.current_image_name]):
+        for i, annotation in enumerate(self.folders_with_annotations[self.current_folder][self.current_image_name]):
             for j in range(0, len(annotation['keypoints']), 2):
                 x, y = self.scale_factor * annotation['keypoints'][j], self.scale_factor * annotation['keypoints'][j+1]
                 if abs(x - event.x) <= 5 and abs(y - event.y) <= 5:
@@ -111,36 +116,50 @@ class ImageViewer(tk.Frame):
 
     def select_corner_property(self, event):
         def close_window():
-            print("Selected option:", selected_option.get())
-            self.annotations[self.current_image_name][self.selected_annotation]['corner_property'][self.active_point // 2] = selected_option.get()
+            print("annotation:", self.folders_with_annotations[self.current_folder][self.current_image_name][self.last_selected_annotation])
+            print("Selected property:", selected_property.get())
+            self.folders_with_annotations[self.current_folder][self.current_image_name][self.last_selected_annotation]['corner_property'][self.active_point // 2] = selected_property.get()
+            if corner_num in [1, 2]:
+                print("Selected T_or_L:", selected_T_or_L.get())
+                self.folders_with_annotations[self.current_folder][self.current_image_name][self.last_selected_annotation]['T_or_L'][corner_num - 1] = selected_T_or_L.get()
             selection_window.destroy()
         def close_window_without_saving(event):
             selection_window.destroy()
         
         selection_window = tk.Toplevel(self.master)
-        selection_window.title(self.active_point // 2)
+        corner_num = self.active_point // 2 + 1
+        selection_window.title(corner_num)
         selection_window.geometry(f"+{event.x_root}+{event.y_root}")
         selection_window.bind("<FocusOut>", close_window_without_saving)
         
-        selected_option = tk.StringVar()
+        curAnnotation = self.folders_with_annotations[self.current_folder][self.current_image_name][self.last_selected_annotation]
 
-        option_v = tk.Radiobutton(selection_window, text="visible", variable=selected_option, value="visible")
-        option_c = tk.Radiobutton(selection_window, text="covered", variable=selected_option, value="covered")
-        option_t = tk.Radiobutton(selection_window, text="truncated", variable=selected_option, value="truncated")
-        
-        initial_property = self.annotations[self.current_image_name][self.selected_annotation]['corner_property'][self.active_point // 2]
-        if initial_property == "visible":
-            option_v.select()
-        elif initial_property == "covered":
-            option_c.select()
-        elif initial_property == "truncated":
-            option_t.select()
+        # coner property
+        initial_property = curAnnotation['corner_property'][self.active_point // 2]
+        selected_property = tk.StringVar(value=initial_property)
 
-        confirm_button = tk.Button(selection_window, text="Confirm", command=close_window)
-        
+        option_v = tk.Radiobutton(selection_window, text="visible", variable=selected_property, value="visible")
+        option_c = tk.Radiobutton(selection_window, text="covered", variable=selected_property, value="covered")
+        option_t = tk.Radiobutton(selection_window, text="truncated", variable=selected_property, value="truncated")
         option_v.pack()
         option_c.pack()
         option_t.pack()
+
+        if curAnnotation['category'] == 'parking_space' and corner_num in [1, 2]:
+            # separator
+            separator = tk.Frame(selection_window, height=2, bd=1, relief=tk.SUNKEN)
+            separator.pack(fill=tk.X, padx=5, pady=5)
+
+            # T or L
+            initial_T_or_L = curAnnotation['T_or_L'][corner_num - 1]
+            selected_T_or_L = tk.StringVar(value=initial_T_or_L)
+            option_T = tk.Radiobutton(selection_window, text="T", variable=selected_T_or_L, value="T")
+            option_L = tk.Radiobutton(selection_window, text="L", variable=selected_T_or_L, value="L")
+            option_T.pack()
+            option_L.pack()
+
+        # confirm button
+        confirm_button = tk.Button(selection_window, text="Confirm", command=close_window)
         confirm_button.pack()
 
     def on_click(self, event):
@@ -148,7 +167,7 @@ class ImageViewer(tk.Frame):
         self.selected_annotation = -1
         self.last_selected_annotation = -1
         self.canvas.delete("highlight")
-        for i, annotation in enumerate(self.annotations[self.current_image_name]):
+        for i, annotation in enumerate(self.folders_with_annotations[self.current_folder][self.current_image_name]):
             for j in range(0, len(annotation['keypoints']), 2):
                 x, y = self.scale_factor * annotation['keypoints'][j], self.scale_factor * annotation['keypoints'][j+1]
                 if abs(x - event.x) <= 5 and abs(y - event.y) <= 5:
@@ -160,8 +179,8 @@ class ImageViewer(tk.Frame):
 
     def on_drag(self, event):
         if self.active_point != -1:
-            self.annotations[self.current_image_name][self.selected_annotation]['keypoints'][self.active_point] = event.x / self.scale_factor
-            self.annotations[self.current_image_name][self.selected_annotation]['keypoints'][self.active_point + 1] = event.y / self.scale_factor
+            self.folders_with_annotations[self.current_folder][self.current_image_name][self.selected_annotation]['keypoints'][self.active_point] = event.x / self.scale_factor
+            self.folders_with_annotations[self.current_folder][self.current_image_name][self.selected_annotation]['keypoints'][self.active_point + 1] = event.y / self.scale_factor
             self.canvas.delete("annotation")
             self.draw_annotations()
 
@@ -176,7 +195,7 @@ class ImageViewer(tk.Frame):
 
     def delete_annotation(self, event):
         if self.last_selected_annotation != -1:
-            self.annotations[self.current_image_name].pop(self.last_selected_annotation)
+            self.folders_with_annotations[self.current_folder][self.current_image_name].pop(self.last_selected_annotation)
             self.active_point = -1
             self.last_selected_annotation = -1
             self.canvas.delete("annotation")
@@ -186,7 +205,7 @@ class ImageViewer(tk.Frame):
 
     def save_annotations(self):
         with open("annotations.txt", 'w+') as file:
-            for annotation in self.annotations[self.current_image_name]:
+            for annotation in self.folders_with_annotations[self.current_folder][self.current_image_name]:
                 corners_str = ' '.join(f"{annotation['corner_property'][i // 2]} {annotation['keypoints'][i] - DIFF} {annotation['keypoints'][i+1] - DIFF}" for i in range(0, len(annotation['keypoints']), 2))
                 line = f"{annotation['id']} " + corners_str + "\n"
                 file.write(line)
@@ -202,11 +221,29 @@ class ImageViewer(tk.Frame):
                     self.new_annotation_id = int(next_line)
                 print(f"current index: {self.current_image_index}  new annotation: {self.new_annotation_id}")
 
+    def save_json(self):
+        if not os.path.exists('results'):
+            os.makedirs('results')
+        for folder_name, annotations in self.folders_with_annotations.items():
+            # craete sub folder
+            folder_path = os.path.join('results', folder_name)
+            if not os.path.exists(folder_path):
+                os.makedirs(folder_path)
+            # minus DIFF from all keypoints
+            for img_name in annotations:
+                for i in range(len(annotations[img_name])):
+                    annotations[img_name][i]['keypoints'] = [i - DIFF for i in annotations[img_name][i]['keypoints']]
+            # export as json
+            json_file_path = os.path.join(folder_path, 'corrected_result.json')
+            with open(json_file_path, 'w') as json_file:
+                json.dump(annotations, json_file, indent=4)
+
     def save_data(self):
         with open(self.saved_data_path, "w") as file:
             file.write(str(self.current_image_index))
             file.write('\n')
             file.write(str(self.new_annotation_id))
+        self.save_json()
 
 
     def open_original_file(self):
@@ -222,52 +259,30 @@ class ImageViewer(tk.Frame):
         self.save_data()
         self.master.destroy()
 
-def initialize_annotations():
-    with open('result_adjust_order.json', 'r') as file:
-        data = json.load(file)
-    
-    categories = {}
-    for d in data['categories']:
-        categories[d['id']] = d['name']
-    images = {}
-    annotations = {}
-    for d in data['images']:
-        images[d['id']] = d['file_name']
-        annotations[d['file_name']] = []
-
-    for d in data['annotations']:
-        new_dict = {}
-        new_dict['id'] = d['id']
-        new_dict['keypoints'] = [i + DIFF for i in d['keypoints']]
-        new_dict['corner_property'] = d['corner_property']
-        new_dict['category'] = categories[d['category_id']]
-        if new_dict['category'] == "parking_space":
-            new_dict['parking_slot_property_1'] = d['parking_slot_property_1']
-
-        image_name = images[d['image_id']]
-        annotations[image_name].append(new_dict)
-    
-    return annotations
-
-def read_images(images_path, annotations_path, saved_data_path):
+def read_images(images_path, folders_with_annotations, saved_data_path, final_output_path):
     file_list = os.listdir(images_path)
     image_files = [file for file in file_list if file.endswith(".jpg") or file.endswith(".bmp")]
     image_files = natsorted(image_files)
     
     root = tk.Tk()
-    viewer = ImageViewer(root, image_files, images_path, annotations_path, saved_data_path)
+    viewer = ImageViewer(root, image_files, images_path, folders_with_annotations, saved_data_path, final_output_path)
     root.protocol("WM_DELETE_WINDOW", viewer.quit)
     root.mainloop()
     
 # image folder
-images_path = "/Users/chengminyu/Downloads/line_error_found"
-# file recording parking slot annotations
+images_path = "JSON/haitian_12800/line_error_found"
+# file displaying current image annotations
 annotations_path = "annotations.txt"
 # file recording 
 # (1) the index of the last accessed image and 
 # (2) the next available annotation index
 saved_data_path = "saved_data.txt"
+# folder recording output json
+final_output_path = "final_output.json"
+# folder containing original JSON
+json_folder = 'JSON/haitian_12800'
 
-annotations = initialize_annotations() # dict(file_name -> list of annotation dicts)
+# dict(parent_folder_name -> dict(file_name -> list of annotation dicts))
+folders_with_annotations = extract_json_files(json_folder)
 
-read_images(images_path, annotations, saved_data_path)
+read_images(images_path, folders_with_annotations, saved_data_path, final_output_path)
