@@ -18,13 +18,19 @@ def extract_annotations(json_path):
 
     for d in data['annotations']:
         new_dict = {}
-        new_dict['id'] = d['id']
         new_dict['keypoints'] = [i + DIFF for i in d['keypoints']]
-        new_dict['corner_property'] = d['corner_property']
-        new_dict['category'] = categories[d['category_id']]
-        if new_dict['category'] == "parking_space":
-            new_dict['T_or_L'] = d['T_or_L']
+        if 'parking_slot_property_1' in d.keys():
             new_dict['parking_slot_property_1'] = d['parking_slot_property_1']
+            new_dict['T_or_L'] = d['T_or_L']
+        new_dict['corner_property'] = d['corner_property']
+        new_dict['id'] = d['id']
+        new_dict['image_id'] = d['image_id']
+        new_dict['group_id'] = d['group_id']
+        if 'parking_slot_property_1' in d.keys():
+            new_dict['parking_slot_property_2'] = d['parking_slot_property_2']
+        if 'ground_lock_state' in d.keys():
+            new_dict['ground_lock_state'] = d['ground_lock_state']
+        new_dict['category_id'] = d['category_id']
 
         image_name = images[d['image_id']]
         annotations[image_name].append(new_dict)
